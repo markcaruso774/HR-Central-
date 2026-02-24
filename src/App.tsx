@@ -354,3 +354,359 @@ function Payroll({ employees }) {
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
           style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "8px 12px", color: COLORS.text, fontSize: 14, outline: "none" }} />
         <Badge color={COLORS.accent3}>Total Payroll: ₦{total.toLocaleString()}
+          </div>
+      <Card>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${COLORS.border}` }}>
+                {["Employee", "Basic Salary", "Allowance", "Tax (7%)", "Pension (8%)", "Net Pay"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", padding: "8px 12px", color: COLORS.muted, fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {employees.map((e) => {
+                const { base, allowance, tax, pension, net } = getRow(e);
+                return (
+                  <tr key={e.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={{ padding: "10px 12px", color: COLORS.text, fontWeight: 600 }}>{e.name}</td>
+                    <td style={{ padding: "10px 12px" }}>
+                      <input type="number" defaultValue={e.salary} onChange={(ev) => setOv(e.id, "salary", ev.target.value)}
+                        style={{ width: 110, background: "#0f1117", border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "5px 8px", color: COLORS.text, fontSize: 13, outline: "none" }} />
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      <input type="number" defaultValue={0} placeholder="0" onChange={(ev) => setOv(e.id, "allowance", ev.target.value)}
+                        style={{ width: 90, background: "#0f1117", border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "5px 8px", color: COLORS.text, fontSize: 13, outline: "none" }} />
+                    </td>
+                    <td style={{ padding: "10px 12px", color: COLORS.danger, fontFamily: "monospace" }}>₦{tax.toLocaleString()}</td>
+                    <td style={{ padding: "10px 12px", color: COLORS.accent2, fontFamily: "monospace" }}>₦{pension.toLocaleString()}</td>
+                    <td style={{ padding: "10px 12px", color: COLORS.accent3, fontFamily: "monospace", fontWeight: 700, fontSize: 15 }}>₦{net.toLocaleString()}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {employees.length === 0 && <p style={{ color: COLORS.muted, textAlign: "center", padding: 30 }}>No employees found.</p>}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── CONTRACT GENERATION ───────────────────────────────────────────────────────
+function Contracts() {
+  const [file, setFile] = useState(null);
+  const [workbook, setWorkbook] = useState(null);
+  const [staffData, setStaffData] = useState([]);
+  const [columns, setColumns] = useState([]);
+  const [contractSheet, setContractSheet] = useState("");
+  const [sheetOptions, setSheetOptions] = useState([]);
+  const [mappings, setMappings] = useState([{ column: "", cell: "" }]);
+  const [status, setStatus] = useState("");
+  const [generated, setGenerated] = useState([]);
+  const fileRef = useRef();
+
+  const handleFile = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    setFile(f);
+    setStatus("Reading file...");
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = new Uint8Array(ev.target.result);
+        const wb = XLSX.read(data, { type: "array" });
+        setWorkbook(wb);
+        setSheetOptions(wb.SheetNames.map((s) => ({ value: s, label: s })));
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        if (rows.length > 0) {
+          const headers = rows[0].filter(Boolean);
+          setColumns(headers);
+          const dataRows = rows.slice(1).filter((r) => r.some((c) => c !== undefined && c !== ""));
+          setStaffData(dataRows.map((r) => {
+            const obj = {};
+            headers.forEach((h, i) => { obj[h] = r[i] ?? ""; });
+            return obj;
+          }));
+          setStatus(`✓ Loaded ${dataRows.length} staff. Select contract sheet and map columns.`);
+        }
+      } catch (err) { setStatus("Error: " + err.message); }
+    };
+    reader.readAsArrayBuffer(f);
+  };
+
+  const addMapping = () => setMappings([...mappings, { column: "", cell: "" }]);
+  const updateMapping = (i, field, val) => { const u = [...mappings]; u[i] = { ...u[i], [field]: val }; setMappings(u); };
+  const removeMapping = (i) => setMappings(mappings.filter((_, idx) => idx !== i));
+
+  const generate = () => {
+    if (!workbook || !contractSheet || staffData.length === 0) {
+      setStatus("⚠ Please upload file, select contract sheet, and add mappings."); return;
+    }
+    const results = [];
+    staffData.forEach((staff, idx) => {
+      try {
+        const wsClone = JSON.parse(JSON.stringify(workbook.Sheets[contractSheet]));
+        mappings.forEach(({ column, cell }) => {
+          if (!column || !cell) return;
+          const value = staff[column] ?? "";
+          const cellKey = cell.toUpperCase();
+          if (wsClone[cellKey]) { wsClone[cellKey].v = value; wsClone[cellKey].w = String(value); wsClone[cellKey].t = "s"; }
+          else { wsClone[cellKey] = { v: value, w: String(value), t: "s" }; }
+        });
+        const newWb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(newWb, wsClone, "Contract");
+        const xlsxData = XLSX.write(newWb, { bookType: "xlsx", type: "base64" });
+        results.push({ name: staff[columns[0]] || `Staff_${idx + 1}`, data: xlsxData });
+      } catch (err) { console.error(err); }
+    });
+    setGenerated(results);
+    setStatus(`✓ Generated ${results.length} contracts!`);
+  };
+
+  const downloadOne = (item) => {
+    const link = document.createElement("a");
+    link.href = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${item.data}`;
+    link.download = `Contract_${item.name}.xlsx`;
+    link.click();
+  };
+
+  const downloadAll = () => generated.forEach((item, i) => setTimeout(() => downloadOne(item), i * 400));
+
+  return (
+    <div>
+      <h2 style={{ color: COLORS.text, fontSize: 28, marginBottom: 8, fontWeight: 800 }}>Contract Generation</h2>
+      <p style={{ color: COLORS.muted, marginBottom: 24, fontSize: 14, lineHeight: 1.7 }}>Upload Excel file — Sheet 1 = Staff Data, another sheet = Contract Template. Map columns to cells and generate all contracts.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <Card>
+          <h3 style={{ color: COLORS.accent, marginBottom: 16, fontSize: 13, letterSpacing: 1, textTransform: "uppercase" }}>Step 1 — Upload Excel File</h3>
+          <div onClick={() => fileRef.current.click()} style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 10, padding: "28px 20px", textAlign: "center", cursor: "pointer", marginBottom: 16 }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
+            <div style={{ color: COLORS.muted, fontSize: 13 }}>{file ? `✓ ${file.name}` : "Click to upload .xlsx file"}</div>
+          </div>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} />
+          {sheetOptions.length > 0 && (
+            <>
+              <h3 style={{ color: COLORS.accent2, marginBottom: 12, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", marginTop: 20 }}>Step 2 — Select Contract Sheet</h3>
+              <SelectField label="Contract Sheet" value={contractSheet} onChange={setContractSheet} options={sheetOptions} />
+              <div style={{ background: "#0f1117", borderRadius: 8, padding: 10, fontSize: 12, color: COLORS.muted }}>
+                Detected: <strong style={{ color: COLORS.accent3 }}>{staffData.length} staff</strong> | Columns: <strong style={{ color: COLORS.text }}>{columns.join(", ")}</strong>
+              </div>
+            </>
+          )}
+        </Card>
+        <Card>
+          <h3 style={{ color: COLORS.accent3, marginBottom: 12, fontSize: 13, letterSpacing: 1, textTransform: "uppercase" }}>Step 3 — Map Columns to Cells</h3>
+          {mappings.map((m, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
+              <div style={{ flex: 1 }}><SelectField label={i === 0 ? "Column" : ""} value={m.column} onChange={(v) => updateMapping(i, "column", v)} options={columns.map((c) => ({ value: c, label: c }))} /></div>
+              <div style={{ color: COLORS.muted, paddingBottom: 14, fontSize: 20 }}>→</div>
+              <div style={{ flex: 1 }}><Input label={i === 0 ? "Target Cell" : ""} value={m.cell} onChange={(v) => updateMapping(i, "cell", v)} placeholder="e.g. G5" /></div>
+              <div style={{ paddingBottom: 14 }}><Btn small color={COLORS.danger} onClick={() => removeMapping(i)}>✕</Btn></div>
+            </div>
+          ))}
+          <Btn small color={COLORS.muted} onClick={addMapping}>+ Add Mapping</Btn>
+          <div style={{ marginTop: 20 }}><Btn onClick={generate} disabled={!workbook || mappings.length === 0}>⚡ Generate All Contracts</Btn></div>
+        </Card>
+      </div>
+      {status && <div style={{ marginTop: 16, padding: "12px 16px", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 8, color: status.startsWith("✓") ? COLORS.accent3 : COLORS.accent2, fontSize: 13 }}>{status}</div>}
+      {generated.length > 0 && (
+        <Card style={{ marginTop: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ color: COLORS.text, fontSize: 15 }}>Generated ({generated.length})</h3>
+            <Btn small color={COLORS.accent} onClick={downloadAll}>⬇ Download All</Btn>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px,1fr))", gap: 10 }}>
+            {generated.map((item, i) => (
+              <div key={i} onClick={() => downloadOne(item)} style={{ background: "#0f1117", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 20 }}>📄</span>
+                <div><div style={{ color: COLORS.text, fontSize: 13, fontWeight: 600 }}>{item.name}</div><div style={{ color: COLORS.accent, fontSize: 11 }}>Click to download</div></div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Payslips() {
+  const [file, setFile] = useState(null);
+  const [workbook, setWorkbook] = useState(null);
+  const [staffData, setStaffData] = useState([]);
+  const [columns, setColumns] = useState([]);
+  const [payslipSheet, setPayslipSheet] = useState("");
+  const [sheetOptions, setSheetOptions] = useState([]);
+  const [mappings, setMappings] = useState([{ column: "", cell: "" }]);
+  const [status, setStatus] = useState("");
+  const [generated, setGenerated] = useState([]);
+  const fileRef = useRef();
+
+  const handleFile = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    setFile(f);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = new Uint8Array(ev.target.result);
+        const wb = XLSX.read(data, { type: "array" });
+        setWorkbook(wb);
+        setSheetOptions(wb.SheetNames.map((s) => ({ value: s, label: s })));
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        if (rows.length > 0) {
+          const headers = rows[0].filter(Boolean);
+          setColumns(headers);
+          const dataRows = rows.slice(1).filter((r) => r.some((c) => c !== undefined && c !== ""));
+          setStaffData(dataRows.map((r) => { const obj = {}; headers.forEach((h, i) => { obj[h] = r[i] ?? ""; }); return obj; }));
+          setStatus(`✓ Loaded ${dataRows.length} staff.`);
+        }
+      } catch (err) { setStatus("Error: " + err.message); }
+    };
+    reader.readAsArrayBuffer(f);
+  };
+
+  const addMapping = () => setMappings([...mappings, { column: "", cell: "" }]);
+  const updateMapping = (i, field, val) => { const u = [...mappings]; u[i] = { ...u[i], [field]: val }; setMappings(u); };
+  const removeMapping = (i) => setMappings(mappings.filter((_, idx) => idx !== i));
+
+  const generate = () => {
+    if (!workbook || !payslipSheet || staffData.length === 0) { setStatus("⚠ Please upload file, select payslip sheet, and add mappings."); return; }
+    const results = [];
+    staffData.forEach((staff, idx) => {
+      try {
+        const wsClone = JSON.parse(JSON.stringify(workbook.Sheets[payslipSheet]));
+        mappings.forEach(({ column, cell }) => {
+          if (!column || !cell) return;
+          const value = staff[column] ?? "";
+          const cellKey = cell.toUpperCase();
+          if (wsClone[cellKey]) { wsClone[cellKey].v = value; wsClone[cellKey].w = String(value); wsClone[cellKey].t = "s"; } else { wsClone[cellKey] = { v: value, w: String(value), t: "s" }; }
+        });
+        const newWb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(newWb, wsClone, "Payslip");
+        const xlsxData = XLSX.write(newWb, { bookType: "xlsx", type: "base64" });
+        results.push({ name: staff[columns[0]] || `Staff_${idx + 1}`, data: xlsxData });
+      } catch (err) { console.error(err); }
+    });
+    setGenerated(results);
+    setStatus(`✓ Generated ${results.length} payslips!`);
+  };
+
+  const downloadOne = (item) => {
+    const link = document.createElement("a");
+    link.href = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${item.data}`;
+    link.download = `Payslip_${item.name}.xlsx`;
+    link.click();
+  };
+
+  const downloadAll = () => generated.forEach((item, i) => setTimeout(() => downloadOne(item), i * 400));
+
+  return (
+    <div>
+      <h2 style={{ color: COLORS.text, fontSize: 28, marginBottom: 8, fontWeight: 800 }}>Payslip Generation</h2>
+      <p style={{ color: COLORS.muted, marginBottom: 24, fontSize: 14, lineHeight: 1.7 }}>Upload Excel file — Sheet 1 = Salary Data, another sheet = Payslip Template. Map columns to cells and generate all payslips.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <Card>
+          <h3 style={{ color: COLORS.accent, marginBottom: 16, fontSize: 13, letterSpacing: 1, textTransform: "uppercase" }}>Step 1 — Upload Excel File</h3>
+          <div onClick={() => fileRef.current.click()} style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 10, padding: "28px 20px", textAlign: "center", cursor: "pointer", marginBottom: 16 }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>💰</div>
+            <div style={{ color: COLORS.muted, fontSize: 13 }}>{file ? `✓ ${file.name}` : "Click to upload .xlsx file"}</div>
+          </div>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} />
+          {sheetOptions.length > 0 && (
+            <>
+              <h3 style={{ color: COLORS.accent2, marginBottom: 12, fontSize: 13, letterSpacing: 1, textTransform: "uppercase", marginTop: 20 }}>Step 2 — Select Payslip Sheet</h3>
+              <SelectField label="Payslip Sheet" value={payslipSheet} onChange={setPayslipSheet} options={sheetOptions} />
+              <div style={{ background: "#0f1117", borderRadius: 8, padding: 10, fontSize: 12, color: COLORS.muted }}>Detected: <strong style={{ color: COLORS.accent3 }}>{staffData.length} staff</strong> | Columns: <strong style={{ color: COLORS.text }}>{columns.join(", ")}</strong></div>
+            </>
+          )}
+        </Card>
+        <Card>
+          <h3 style={{ color: COLORS.accent3, marginBottom: 12, fontSize: 13, letterSpacing: 1, textTransform: "uppercase" }}>Step 3 — Map Columns to Cells</h3>
+          {mappings.map((m, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "flex-end" }}>
+              <div style={{ flex: 1 }}><SelectField label={i === 0 ? "Column" : ""} value={m.column} onChange={(v) => updateMapping(i, "column", v)} options={columns.map((c) => ({ value: c, label: c }))} /></div>
+              <div style={{ color: COLORS.muted, paddingBottom: 14, fontSize: 20 }}>→</div>
+              <div style={{ flex: 1 }}><Input label={i === 0 ? "Target Cell" : ""} value={m.cell} onChange={(v) => updateMapping(i, "cell", v)} placeholder="e.g. F8" /></div>
+              <div style={{ paddingBottom: 14 }}><Btn small color={COLORS.danger} onClick={() => removeMapping(i)}>✕</Btn></div>
+            </div>
+          ))}
+          <Btn small color={COLORS.muted} onClick={addMapping}>+ Add Mapping</Btn>
+          <div style={{ marginTop: 20 }}><Btn onClick={generate} disabled={!workbook || mappings.length === 0}>⚡ Generate All Payslips</Btn></div>
+        </Card>
+      </div>
+      {status && <div style={{ marginTop: 16, padding: "12px 16px", background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 8, color: status.startsWith("✓") ? COLORS.accent3 : COLORS.accent2, fontSize: 13 }}>{status}</div>}
+      {generated.length > 0 && (
+        <Card style={{ marginTop: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ color: COLORS.text, fontSize: 15 }}>Generated ({generated.length})</h3>
+            <Btn small color={COLORS.accent} onClick={downloadAll}>⬇ Download All</Btn>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px,1fr))", gap: 10 }}>
+            {generated.map((item, i) => (
+              <div key={i} onClick={() => downloadOne(item)} style={{ background: "#0f1117", border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 20 }}>💵</span>
+                <div><div style={{ color: COLORS.text, fontSize: 13, fontWeight: 600 }}>{item.name}</div><div style={{ color: COLORS.accent, fontSize: 11 }}>Click to download</div></div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+export default function App() {
+  const [active, setActive] = useState("dashboard");
+  const [employees, setEmployees] = useState([
+    { id: 1, name: "Adaeze Okonkwo", jobTitle: "Senior Accountant", department: "Finance", email: "adaeze@company.ng", phone: "08012345678", salary: 350000, startDate: "2022-03-01" },
+    { id: 2, name: "Chukwuemeka Nwosu", jobTitle: "HR Manager", department: "Human Resources", email: "emeka@company.ng", phone: "08087654321", salary: 420000, startDate: "2021-07-15" },
+    { id: 3, name: "Fatima Al-Hassan", jobTitle: "Software Engineer", department: "Technology", email: "fatima@company.ng", phone: "08055566677", salary: 500000, startDate: "2023-01-10" },
+  ]);
+  const [leaveRequests, setLeaveRequests] = useState([
+    { id: 1, employeeId: 1, employeeName: "Adaeze Okonkwo", type: "Annual Leave", from: "2025-03-10", to: "2025-03-17", reason: "Family vacation", status: "Approved" },
+    { id: 2, employeeId: 2, employeeName: "Chukwuemeka Nwosu", type: "Sick Leave", from: "2025-02-20", to: "2025-02-22", reason: "Flu", status: "Pending" },
+  ]);
+  const [attendance, setAttendance] = useState([]);
+
+  const renderModule = () => {
+    switch (active) {
+      case "dashboard": return <Dashboard employees={employees} leaveRequests={leaveRequests} attendance={attendance} />;
+      case "employees": return <Employees employees={employees} setEmployees={setEmployees} />;
+      case "attendance": return <Attendance employees={employees} attendance={attendance} setAttendance={setAttendance} />;
+      case "leave": return <Leave employees={employees} leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} />;
+      case "payroll": return <Payroll employees={employees} />;
+      case "contracts": return <Contracts />;
+      case "payslips": return <Payslips />;
+      default: return null;
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: COLORS.bg, fontFamily: "'Segoe UI', system-ui, sans-serif", color: COLORS.text }}>
+      <div style={{ width: 210, background: COLORS.card, borderRight: `1px solid ${COLORS.border}`, display: "flex", flexDirection: "column", padding: "24px 0", flexShrink: 0 }}>
+        <div style={{ padding: "0 20px 24px", borderBottom: `1px solid ${COLORS.border}` }}>
+          <div style={{ fontSize: 18, color: COLORS.accent, fontWeight: 800 }}>HR Central</div>
+          <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 3, letterSpacing: 1.2, textTransform: "uppercase" }}>People Operations</div>
+        </div>
+        <nav style={{ padding: "14px 8px", flex: 1 }}>
+          {modules.map((m) => (
+            <div key={m.id} onClick={() => setActive(m.id)}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, cursor: "pointer", marginBottom: 3, background: active === m.id ? COLORS.accent + "18" : "transparent", borderLeft: active === m.id ? `3px solid ${COLORS.accent}` : "3px solid transparent", color: active === m.id ? COLORS.accent : COLORS.muted, fontSize: 14, fontWeight: active === m.id ? 700 : 400 }}>
+              <span>{m.icon}</span>{m.label}
+            </div>
+          ))}
+        </nav>
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${COLORS.border}` }}>
+          <div style={{ fontSize: 10, color: COLORS.muted, lineHeight: 1.7 }}>
+            <span style={{ color: COLORS.accent3, fontWeight: 700 }}>Free & Open Source</span><br />No subscriptions · No ads
+          </div>
+        </div>
+      </div>
+      <div style={{ flex: 1, padding: "32px 36px", overflowY: "auto" }}>{renderModule()}</div>
+    </div>
+  );
+}
