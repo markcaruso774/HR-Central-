@@ -335,9 +335,7 @@ function Payroll({ employees }) {
             <thead>
               <tr style={{ borderBottom: `2px solid ${COLORS.border}` }}>
                 {["Employee", "Basic Salary", "Allowance", "Tax (7%)", "Pension (8%)", "Net Pay"].map((h) => (
-                  <th key={h} style={{ textAlign: "left",
-                                      
-function Contracts() {
+                  <th key={h} style={{ textAlign: "left",function Contracts() {
   const [file, setFile] = useState(null);
   const [workbook, setWorkbook] = useState(null);
   const [staffData, setStaffData] = useState([]);
